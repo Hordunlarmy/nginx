@@ -10,7 +10,10 @@ services:
     volumes:
       - certbot-etc:/etc/letsencrypt
       - certbot-var:/var/www/certbot
-      - ./conf:/etc/nginx
+      - ./conf/nginx.conf.template:/etc/nginx/nginx.conf.template
+      - ./conf/conf.d:/etc/nginx/conf.d
+      - ./conf/nginx.conf:/etc/nginx/nginx.conf
+      - ./conf/html:/etc/nginx/html
     command: /bin/sh -c "/entrypoint.sh & crond -f"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
@@ -27,4 +30,8 @@ services:
 volumes:
   certbot-etc:
   certbot-var:
+
+networks:
+  shared-network:
+    external: true
 

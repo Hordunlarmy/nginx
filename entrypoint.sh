@@ -1,13 +1,13 @@
-#!/bin/sh
+#!/bin/bash
 
 set -e
 
 log_info() {
-  echo "[INFO] $1" >&2  # Redirect to stderr, so it doesn't get mixed into the config
+  echo "[INFO] $1" >&2
 }
 
 log_error() {
-  echo "[ERROR] $1" >&2  # Redirect to stderr, so it doesn't get mixed into the config
+  echo "[ERROR] $1" >&2
   exit 1
 }
 
@@ -20,65 +20,93 @@ log_info "Starting entrypoint..."
 
 PRIMARY_DOMAIN=$(echo "$DOMAIN_NAMES" | cut -d',' -f1)
 
-# Function to generate NGINX location blocks from BLOCKS
 generate_location_blocks() {
-  has_root_location=false
-
   log_info "Generating NGINX location blocks..."
 
-  # Iterate through BLOCKS and create the location blocks
-  echo "$BLOCKS" | jq -c '.[]' | while read -r block; do
+  local output=""
+  local has_root_location=false
+
+  while IFS= read -r block; do
     location=$(echo "$block" | jq -r '.location')
     address=$(echo "$block" | jq -r '.address')
+    type=$(echo "$block" | jq -r '.type // "http"')
 
-    # Check if it's the root location
+    address="${address//http:\/\//}"
+    address="${address//https:\/\//}"
+
+    if [ -z "$address" ]; then
+      address="localhost"
+    fi
+
     if [ "$location" = "/" ]; then
       has_root_location=true
     fi
 
-    # Default address to localhost if it's missing
-    if [[ "$location" != "/" && -z "$address" ]]; then
-      location="/"
-      address="http://localhost"
-    fi
-
-    # Ensure location ends with a trailing slash if it isn't the root
     if [[ "$location" != "/" && "$location" != */ ]]; then
       location="${location}/"
     fi
 
-    # Output the location block
-    cat <<EOF
-    location "$location" {
-        proxy_pass "$address";
+    output="${output}
+    location $location {"
+    
+    if [ "$type" = "websocket" ]; then
+      output="${output}
+        proxy_pass http://$address;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-EOF
-  done
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+      "
+    elif [ "$type" = "php" ]; then
+      output="${output}
+        try_files \$uri =404;
+        fastcgi_split_path_info ^(.+\.php)(/.+)\$;
+        fastcgi_pass $address;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_param PATH_INFO \$fastcgi_path_info;
+      "
+    else
+      output="${output}
+        proxy_pass http://$address;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+      "
+    fi
+
+    output="${output}
+    }"
+  done <<< "$(echo "$BLOCKS" | jq -c '.[]')"
+
+  echo "$output" | sed 's/^/    /'
 }
 
-# Generate the HTTP blocks
 log_info "Generating HTTP blocks..."
 HTTP_BLOCKS=$(generate_location_blocks)
-log_info "HTTP BLOCKS: $HTTP_BLOCKS"
 log_info "Generated HTTP blocks successfully."
 
 HTTPS_BLOCK=""
 
-if [ "$SECURE" = "true" ]; then
-  log_info "SECURE is true. Setting up HTTPS block..."
+setup_ssl() {
+  log_info "SECURE is true. Setting up SSL..."
 
   if [ "$SSL_PROVIDER" = "certbot" ]; then
     log_info "Using certbot to generate certificate..."
 
     mkdir -p /var/www/certbot
 
+    DOMAIN_ARGS=""
+    for DOMAIN in $(echo $DOMAIN_NAMES | tr ',' ' '); do
+      DOMAIN_ARGS="$DOMAIN_ARGS -d $DOMAIN"
+    done
+
     if ! certbot certonly --webroot -w /var/www/certbot \
-      --email "$EMAIL" --agree-tos --no-eff-email \
-      -d $DOMAIN_NAMES; then
+          --email "$EMAIL" --agree-tos --no-eff-email $DOMAIN_ARGS; then
       log_error "Certbot certificate generation failed!"
     fi
 
@@ -110,31 +138,37 @@ if [ "$SECURE" = "true" ]; then
 
 $(generate_location_blocks)
   }"
+}
+
+if [ "$SECURE" = "true" ]; then
+  setup_ssl
 fi
 
 log_info "Rendering final nginx.conf..."
 
-# Use envsubst to substitute variables in nginx.conf.template
-if ! envsubst '\$DOMAIN_NAMES \$SECURE \$SSL_PROVIDER \$EMAIL \$PRIMARY_DOMAIN' < /etc/nginx/nginx.conf.template > /tmp/nginx.conf.tmp; then
-  log_error "Failed to render nginx.conf with HTTP blocks!"
-fi
-
-# Insert the generated HTTP blocks into the placeholder in the temporary file
-if ! echo "$HTTP_BLOCKS" | sed "/###BLOCKS###/r /dev/stdin" /tmp/nginx.conf.tmp > /tmp/nginx.conf.tmp2; then
-  log_error "Failed to insert HTTP blocks into nginx.conf!"
-fi
-
-# Insert the HTTPS block into the nginx.conf, if applicable
-if [ -n "$HTTPS_BLOCK" ]; then
-  if ! sed "s|###HTTPS SERVER###|$HTTPS_BLOCK|" /tmp/nginx.conf.tmp2 > /etc/nginx/nginx.conf; then
-    log_error "Failed to insert HTTPS block into nginx.conf!"
-  fi
-else
-  # If no HTTPS block, just use the modified HTTP block
-  if ! mv /tmp/nginx.conf.tmp2 /etc/nginx/nginx.conf; then
-    log_error "Failed to move temporary nginx.conf to final location!"
-  fi
-fi
+awk -v http_blocks="$HTTP_BLOCKS" -v https_block="$HTTPS_BLOCK" '
+BEGIN {
+    # Read all lines into the array
+    in_block = 0;
+    in_https_block = 0;
+}
+{
+    if ($0 ~ "###BLOCKS###") {
+        print "\t###BLOCKS###";
+        print http_blocks;
+    }
+    else if ($0 ~ "###HTTPS SERVER###") {
+        if (https_block != "") {
+            print https_block;
+        } else {
+            print "\t###HTTPS SERVER###";
+        }
+    }
+    else {
+        print $0;
+    }
+}
+' /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
 log_info "NGINX configuration generated successfully."
 
