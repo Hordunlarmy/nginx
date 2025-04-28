@@ -31,6 +31,17 @@ http {
             root /var/www/certbot;
         }
 
+        location ~ \.(git|txt|md|gitignore|conf|db|env|dockerfile|yml|json|htaccess|sql|ini|lock)$ {
+            deny all;
+            return 404;
+        }
+
+        location ~ /(.git|vendor|configs|data|schema)/ {
+            deny all;
+            return 404;
+        }
+
+
         ###BLOCKS###
 
     }

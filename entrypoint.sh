@@ -21,10 +21,20 @@ log_info "Starting entrypoint..."
 PRIMARY_DOMAIN=$(echo "$DOMAIN_NAMES" | cut -d',' -f1)
 
 generate_location_blocks() {
-  log_info "Generating NGINX location blocks..."
+  if [ -z "$BLOCKS" ]; then
+    log_info "BLOCKS is not set. No location blocks will be generated."
+    echo ""
+    return
+  fi
 
+  if ! echo "$BLOCKS" | jq -e '. | length > 0' >/dev/null 2>&1; then
+    log_info "BLOCKS is empty or not valid JSON. No location blocks will be generated."
+    echo ""
+    return
+  fi
+
+  log_info "Generating NGINX location blocks..."
   local output=""
-  local has_root_location=false
 
   while IFS= read -r block; do
     location=$(echo "$block" | jq -r '.location')
@@ -126,6 +136,8 @@ setup_ssl() {
     log_error "Unknown SSL provider: $SSL_PROVIDER"
   fi
 
+  local ssl_location_blocks=$(generate_location_blocks)
+
   HTTPS_BLOCK="server {
     listen 443 ssl;
     server_name ${DOMAIN_NAMES};
@@ -135,8 +147,7 @@ setup_ssl() {
 
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
-
-$(generate_location_blocks)
+${ssl_location_blocks}
   }"
 }
 
@@ -155,7 +166,9 @@ BEGIN {
 {
     if ($0 ~ "###BLOCKS###") {
         print "\t###BLOCKS###";
-        print http_blocks;
+        if (http_blocks != "") {
+            print http_blocks;
+        }
     }
     else if ($0 ~ "###HTTPS SERVER###") {
         if (https_block != "") {
