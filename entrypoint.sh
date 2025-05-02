@@ -8,7 +8,6 @@ log_info() {
 
 log_error() {
 	echo "[ERROR] $1" >&2
-	exit 1
 }
 
 log_info "Starting entrypoint..."
@@ -17,6 +16,7 @@ CONFIG_JSON="/etc/nginx/config.json"
 
 if [ ! -f "$CONFIG_JSON" ]; then
 	log_error "Config file $CONFIG_JSON not found!"
+	exit 1
 fi
 
 DOMAIN_NAMES=$(jq -r '.DOMAIN_NAMES' "$CONFIG_JSON")
@@ -66,38 +66,38 @@ generate_location_blocks() {
     location $location {"
 
 		[ -n "$rewrite" ] && output="${output}
-        rewrite $rewrite;"
+      rewrite $rewrite;"
 
 		case "$type" in
 		websocket)
 			output="${output}
-        proxy_http_version 1.1;
-        proxy_pass http://$address;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_buffering off;"
+      proxy_http_version 1.1;
+      proxy_pass http://$address;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection 'upgrade';
+      proxy_buffering off;"
 			;;
 		php)
 			output="${output}
-        try_files \$uri =404;
-        fastcgi_split_path_info ^(.+\.php)(/.+)\$;
-        fastcgi_pass $address;
-        fastcgi_index index.php;
-        include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-        fastcgi_param PATH_INFO \$fastcgi_path_info;"
+      try_files \$uri =404;
+      fastcgi_split_path_info ^(.+\.php)(/.+)\$;
+      fastcgi_pass $address;
+      fastcgi_index index.php;
+      include fastcgi_params;
+      fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+      fastcgi_param PATH_INFO \$fastcgi_path_info;"
 			;;
 		*)
 			output="${output}
-        proxy_pass http://$address;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;"
+      proxy_pass http://$address;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;"
 			;;
 		esac
 
@@ -118,20 +118,24 @@ setup_ssl() {
 	log_info "SECURE is true. Setting up SSL..."
 
 	if [ "$SSL_PROVIDER" = "certbot" ]; then
-		log_info "Using certbot to generate certificate..."
-		mkdir -p /var/www/certbot
+		log_info "Using Certbot (standalone) to generate certificate..."
 
 		DOMAIN_ARGS=""
 		for DOMAIN in $(echo "$DOMAIN_NAMES" | tr ',' ' '); do
 			DOMAIN_ARGS="$DOMAIN_ARGS -d $DOMAIN"
 		done
 
-		if ! certbot certonly --webroot -w /var/www/certbot \
-			--email "$EMAIL" --agree-tos --no-eff-email $DOMAIN_ARGS; then
-			log_error "Certbot certificate generation failed!"
+		if ! certbot certonly --standalone \
+			--preferred-challenges http \
+			--email "$EMAIL" \
+			--agree-tos \
+			--no-eff-email $DOMAIN_ARGS; then
+			log_error "Certbot certificate generation failed. Proceeding without SSL."
+			return 1
 		fi
 
-		echo "0 0 * * * certbot renew --post-hook \"nginx -s reload\"" >/etc/crontabs/root
+		# Set up the renewal cron job
+		echo "0 0 * * * certbot renew --pre-hook 'nginx -s stop' --post-hook 'nginx -s reload'" >/etc/crontabs/root
 
 	elif [ "$SSL_PROVIDER" = "selfsigned" ]; then
 		log_info "Using self-signed certificate..."
@@ -141,10 +145,12 @@ setup_ssl() {
 			-keyout /etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem \
 			-out /etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem \
 			-subj "/CN=${PRIMARY_DOMAIN}"; then
-			log_error "Self-signed certificate creation failed!"
+			log_error "Self-signed certificate creation failed. Proceeding without SSL."
+			return 1
 		fi
 	else
 		log_error "Unknown SSL provider: $SSL_PROVIDER"
+		return 1
 	fi
 
 	local ssl_location_blocks=$(generate_location_blocks)
@@ -163,7 +169,7 @@ ${ssl_location_blocks}
 }
 
 if [ "$SECURE" = "true" ]; then
-	setup_ssl
+	setup_ssl || log_info "SSL setup failed, continuing without SSL."
 fi
 
 log_info "Rendering final nginx.conf..."
