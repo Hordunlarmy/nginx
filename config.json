@@ -1,0 +1,37 @@
+{
+  "DOMAIN_NAMES": "horduntech.com, www.horduntech.com",
+  "SECURE": false,
+  "SSL_PROVIDER": "certbot",
+  "EMAIL": "horduntech@gmail.com",
+  "ENABLE_HTTP_REDIRECT": false,
+  "BLOCKS": [
+    {
+      "location": "/",
+      "address": "http://127.0.0.1:3000"
+    },
+    {
+      "location": "/api/",
+      "address": "http://127.0.0.1:9000",
+      "type": "http",
+      "rewrite": "^/api(/.*)$ $1 break"
+    },
+    {
+      "location": "/staging/api/",
+      "address": "http://127.0.0.1:9001",
+      "type": "http",
+      "rewrite": "^/staging/api(/.*)$ $1 break"
+    },
+    {
+      "location": "/ws/",
+      "address": "http://127.0.0.1:8080",
+      "type": "websocket"
+    },
+    {
+      "location": "/staging/ws/",
+      "address": "http://127.0.0.1:8081",
+      "type": "websocket",
+      "rewrite": "^/staging/api(/.*)$ $1 break"
+    }
+  ]
+}
+

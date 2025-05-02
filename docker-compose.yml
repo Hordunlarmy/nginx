@@ -3,7 +3,6 @@ services:
     build: .
     image: nginx:latest
     container_name: nginx
-    env_file: .env
     ports:
       - "80:80"
       - "443:443"
@@ -14,6 +13,7 @@ services:
       - ./conf/conf.d:/etc/nginx/conf.d
       - ./conf/nginx.conf:/etc/nginx/nginx.conf
       - ./conf/html:/etc/nginx/html
+      - ./config.json:/etc/nginx/config.json
     command: /bin/sh -c "/entrypoint.sh & crond -f"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
@@ -26,6 +26,8 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+    networks:
+      - shared-network
 
 volumes:
   certbot-etc:

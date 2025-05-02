@@ -13,6 +13,19 @@ log_error() {
 
 log_info "Starting entrypoint..."
 
+CONFIG_JSON="/etc/nginx/config.json"
+
+if [ ! -f "$CONFIG_JSON" ]; then
+	log_error "Config file $CONFIG_JSON not found!"
+fi
+
+DOMAIN_NAMES=$(jq -r '.DOMAIN_NAMES' "$CONFIG_JSON")
+SECURE=$(jq -r '.SECURE' "$CONFIG_JSON")
+SSL_PROVIDER=$(jq -r '.SSL_PROVIDER' "$CONFIG_JSON")
+EMAIL=$(jq -r '.EMAIL' "$CONFIG_JSON")
+ENABLE_HTTP_REDIRECT=$(jq -r '.ENABLE_HTTP_REDIRECT' "$CONFIG_JSON")
+BLOCKS=$(jq -c '.BLOCKS' "$CONFIG_JSON")
+
 [ -z "$DOMAIN_NAMES" ] && log_error "DOMAIN_NAMES is not set!"
 [ -z "$SSL_PROVIDER" ] && log_error "SSL_PROVIDER is not set!"
 [ -z "$EMAIL" ] && log_error "EMAIL is not set!"
@@ -42,16 +55,8 @@ generate_location_blocks() {
 		type=$(echo "$block" | jq -r '.type // "http"')
 		rewrite=$(echo "$block" | jq -r '.rewrite // empty')
 
-		address="${address//http:\/\//}"
-		address="${address//https:\/\//}"
-
-		if [ -z "$address" ]; then
-			address="localhost"
-		fi
-
-		if [ "$location" = "/" ]; then
-			has_root_location=true
-		fi
+		address="${address#http://}"
+		address="${address#https://}"
 
 		if [[ "$location" != "/" && "$location" != */ ]]; then
 			location="${location}/"
@@ -60,13 +65,11 @@ generate_location_blocks() {
 		output="${output}
     location $location {"
 
-		# Inject rewrite if specified
-		if [ -n "$rewrite" ]; then
-			output="${output}
+		[ -n "$rewrite" ] && output="${output}
         rewrite $rewrite;"
-		fi
 
-		if [ "$type" = "websocket" ]; then
+		case "$type" in
+		websocket)
 			output="${output}
         proxy_http_version 1.1;
         proxy_pass http://$address;
@@ -76,9 +79,9 @@ generate_location_blocks() {
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
-        proxy_buffering off;
-      "
-		elif [ "$type" = "php" ]; then
+        proxy_buffering off;"
+			;;
+		php)
 			output="${output}
         try_files \$uri =404;
         fastcgi_split_path_info ^(.+\.php)(/.+)\$;
@@ -86,17 +89,17 @@ generate_location_blocks() {
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-        fastcgi_param PATH_INFO \$fastcgi_path_info;
-      "
-		else
+        fastcgi_param PATH_INFO \$fastcgi_path_info;"
+			;;
+		*)
 			output="${output}
         proxy_pass http://$address;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-      "
-		fi
+        proxy_set_header X-Forwarded-Proto \$scheme;"
+			;;
+		esac
 
 		output="${output}
     }"
@@ -116,11 +119,10 @@ setup_ssl() {
 
 	if [ "$SSL_PROVIDER" = "certbot" ]; then
 		log_info "Using certbot to generate certificate..."
-
 		mkdir -p /var/www/certbot
 
 		DOMAIN_ARGS=""
-		for DOMAIN in $(echo $DOMAIN_NAMES | tr ',' ' '); do
+		for DOMAIN in $(echo "$DOMAIN_NAMES" | tr ',' ' '); do
 			DOMAIN_ARGS="$DOMAIN_ARGS -d $DOMAIN"
 		done
 
@@ -167,38 +169,26 @@ fi
 log_info "Rendering final nginx.conf..."
 
 awk -v enable_http_redirect="$ENABLE_HTTP_REDIRECT" -v http_blocks="$HTTP_BLOCKS" -v https_block="$HTTPS_BLOCK" '
-BEGIN {
-    # Read all lines into the array
-    in_block = 0;
-    in_https_block = 0;
-}
 {
-    if ($0 ~ "###BLOCKS###") {
-        print "\t###BLOCKS###";
-        # If HTTP redirect is enabled, add the redirect logic here
-        if (enable_http_redirect == "true") {
-            print "\treturn 301 https://\$host\$request_uri;";
-        } else {
-            # Otherwise, include the http_blocks
-            if (http_blocks != "") {
-                print http_blocks;
-            }
-        }
+  if ($0 ~ "###BLOCKS###") {
+    print "\t###BLOCKS###"
+    if (enable_http_redirect == "true") {
+      print "\treturn 301 https://\$host\$request_uri;"
+    } else if (http_blocks != "") {
+      print http_blocks
     }
-    else if ($0 ~ "###HTTPS SERVER###") {
-        if (https_block != "") {
-            print https_block;
-        } else {
-            print "\t###HTTPS SERVER###";
-        }
+  } else if ($0 ~ "###HTTPS SERVER###") {
+    if (https_block != "") {
+      print https_block
+    } else {
+      print "\t###HTTPS SERVER###"
     }
-    else {
-        print $0;
-    }
+  } else {
+    print $0
+  }
 }
 ' /etc/nginx/nginx.conf.template >/etc/nginx/nginx.conf
 
 log_info "NGINX configuration generated successfully."
-
 log_info "Starting NGINX..."
 exec nginx -g "daemon off;"
