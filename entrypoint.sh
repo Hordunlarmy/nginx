@@ -120,6 +120,19 @@ setup_ssl() {
 	if [ "$SSL_PROVIDER" = "certbot" ]; then
 		log_info "Using Certbot (standalone) to generate certificate..."
 
+		CERT_PATH="/etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem"
+
+		if [ -f "$CERT_PATH" ]; then
+			cert_mtime=$(stat -c %Y "$CERT_PATH")
+			now=$(date +%s)
+			diff=$((now - cert_mtime))
+
+			if [ "$diff" -lt 86400 ]; then
+				log_info "Certificate for ${PRIMARY_DOMAIN} was created less than 24 hours ago. Skipping regeneration."
+				return 0
+			fi
+		fi
+
 		DOMAIN_ARGS=""
 		for DOMAIN in $(echo "$DOMAIN_NAMES" | tr ',' ' '); do
 			DOMAIN_ARGS="$DOMAIN_ARGS -d $DOMAIN"
@@ -134,7 +147,6 @@ setup_ssl() {
 			return 1
 		fi
 
-		# Set up the renewal cron job
 		echo "0 0 * * * certbot renew --pre-hook 'nginx -s stop' --post-hook 'nginx -s reload'" >/etc/crontabs/root
 
 	elif [ "$SSL_PROVIDER" = "selfsigned" ]; then

@@ -22,7 +22,7 @@ nginx:
 
 stop:
 	@echo "[INFO] Stopping NGINX container..."
-	docker compose down -v
+	docker compose down
 
 	@echo "[INFO] Removing shared-network..."
 	@if docker network inspect shared-network > /dev/null 2>&1; then \
