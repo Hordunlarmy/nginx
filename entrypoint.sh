@@ -129,23 +129,52 @@ setup_ssl() {
 
 			if [ "$diff" -lt 86400 ]; then
 				log_info "Certificate for ${PRIMARY_DOMAIN} was created less than 24 hours ago. Skipping regeneration."
-				return 0
+			else
+				log_info "Certificate is older than 24 hours, regenerating..."
+				# Proceed with certificate regeneration if needed
+				DOMAIN_ARGS=""
+				for DOMAIN in $(echo "$DOMAIN_NAMES" | tr ',' ' '); do
+					DOMAIN_ARGS="$DOMAIN_ARGS -d $DOMAIN"
+				done
+
+				if ! certbot certonly --standalone \
+					--preferred-challenges http \
+					--email "$EMAIL" \
+					--agree-tos \
+					--no-eff-email $DOMAIN_ARGS; then
+					log_error "Certbot certificate generation failed. Proceeding without SSL."
+					return 1
+				fi
+			fi
+		else
+			log_info "No existing certificate found. Generating a new one..."
+			DOMAIN_ARGS=""
+			for DOMAIN in $(echo "$DOMAIN_NAMES" | tr ',' ' '); do
+				DOMAIN_ARGS="$DOMAIN_ARGS -d $DOMAIN"
+			done
+
+			if ! certbot certonly --standalone \
+				--preferred-challenges http \
+				--email "$EMAIL" \
+				--agree-tos \
+				--no-eff-email $DOMAIN_ARGS; then
+				log_error "Certbot certificate generation failed. Proceeding without SSL."
+				return 1
 			fi
 		fi
 
-		DOMAIN_ARGS=""
-		for DOMAIN in $(echo "$DOMAIN_NAMES" | tr ',' ' '); do
-			DOMAIN_ARGS="$DOMAIN_ARGS -d $DOMAIN"
-		done
+		# Ensure we set up the HTTPS block regardless of certificate creation
+		HTTPS_BLOCK="server {
+    listen 443 ssl;
+    server_name ${DOMAIN_NAMES};
 
-		if ! certbot certonly --standalone \
-			--preferred-challenges http \
-			--email "$EMAIL" \
-			--agree-tos \
-			--no-eff-email $DOMAIN_ARGS; then
-			log_error "Certbot certificate generation failed. Proceeding without SSL."
-			return 1
-		fi
+    ssl_certificate /etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+${ssl_location_blocks}
+  }"
 
 		echo "0 0 * * * certbot renew --pre-hook 'nginx -s stop' --post-hook 'nginx -s reload'" >/etc/crontabs/root
 
