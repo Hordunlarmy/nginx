@@ -34,78 +34,81 @@ BLOCKS=$(jq -c '.BLOCKS' "$CONFIG_JSON")
 PRIMARY_DOMAIN=$(echo "$DOMAIN_NAMES" | cut -d',' -f1)
 
 generate_location_blocks() {
-	if [ -z "$BLOCKS" ]; then
-		log_info "BLOCKS is not set. No location blocks will be generated."
-		echo ""
-		return
-	fi
+    if [ -z "$BLOCKS" ]; then
+        log_info "BLOCKS is not set. No location blocks will be generated."
+        echo ""
+        return
+    fi
 
-	if ! echo "$BLOCKS" | jq -e '. | length > 0' >/dev/null 2>&1; then
-		log_info "BLOCKS is empty or not valid JSON. No location blocks will be generated."
-		echo ""
-		return
-	fi
+    if ! echo "$BLOCKS" | jq -e '. | length > 0' >/dev/null 2>&1; then
+        log_error "BLOCKS is empty or not valid JSON. Raw BLOCKS: $BLOCKS"
+        echo ""
+        return
+    fi
 
-	log_info "Generating NGINX location blocks..."
-	local output=""
+    log_info "Generating NGINX location blocks..."
+    local output=""
 
-	while IFS= read -r block; do
-		location=$(echo "$block" | jq -r '.location')
-		address=$(echo "$block" | jq -r '.address')
-		type=$(echo "$block" | jq -r '.type // "http"')
-		rewrite=$(echo "$block" | jq -r '.rewrite // empty')
+    while IFS= read -r block; do
+        location=$(echo "$block" | jq -r '.location')
+        address=$(echo "$block" | jq -r '.address')
+        type=$(echo "$block" | jq -r '.type // "http"')
+        rewrite=$(echo "$block" | jq -r '.rewrite // empty')
+        root=$(echo "$block" | jq -r '.root // empty')
 
-		address="${address#http://}"
-		address="${address#https://}"
+        address="${address#http://}"
+        address="${address#https://}"
 
-		if [[ "$location" != "/" && "$location" != */ ]]; then
-			location="${location}/"
-		fi
+        if [[ "$location" != "/" && "$location" != */ && "$location" != "~ "* ]]; then
+            location="${location}/"
+        fi
 
-		output="${output}
+        output="${output}
     location $location {"
+        [ -n "$root" ] && output="${output}
+        root $root;"
 
-		[ -n "$rewrite" ] && output="${output}
-      rewrite $rewrite;"
+        [ -n "$rewrite" ] && output="${output}
+        rewrite $rewrite;"
 
-		case "$type" in
-		websocket)
-			output="${output}
-      proxy_http_version 1.1;
-      proxy_pass http://$address;
-      proxy_set_header Host \$host;
-      proxy_set_header X-Real-IP \$remote_addr;
-      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto \$scheme;
-      proxy_set_header Upgrade \$http_upgrade;
-      proxy_set_header Connection upgrade;
-      proxy_buffering off;"
-			;;
-		php)
-			output="${output}
-      try_files \$uri =404;
-      fastcgi_split_path_info ^(.+\.php)(/.+)\$;
-      fastcgi_pass $address;
-      fastcgi_index index.php;
-      include fastcgi_params;
-      fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-      fastcgi_param PATH_INFO \$fastcgi_path_info;"
-			;;
-		*)
-			output="${output}
-      proxy_pass http://$address;
-      proxy_set_header Host \$host;
-      proxy_set_header X-Real-IP \$remote_addr;
-      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto \$scheme;"
-			;;
-		esac
+        case "$type" in
+        websocket)
+            output="${output}
+        proxy_http_version 1.1;
+        proxy_pass http://$address;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection upgrade;
+        proxy_buffering off;"
+            ;;
+        php)
+            output="${output}
+        try_files \$uri =404;
+        fastcgi_split_path_info ^(.+\.php)(/.+)\$;
+        fastcgi_pass $address;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_param PATH_INFO \$fastcgi_path_info;"
+            ;;
+        *)
+            output="${output}
+        proxy_pass http://$address;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;"
+            ;;
+        esac
 
-		output="${output}
+        output="${output}
     }"
-	done <<<"$(echo "$BLOCKS" | jq -c '.[]')"
+    done <<<"$(echo "$BLOCKS" | jq -c '.[]')"
 
-	echo "$output" | sed 's/^/    /'
+    echo "$output" | sed 's/^/    /'
 }
 
 log_info "Generating HTTP blocks..."
