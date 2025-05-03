@@ -13,13 +13,17 @@
       "location": "/api/",
       "address": "http://127.0.0.1:9000",
       "type": "http",
-      "rewrite": "^/api(/.*)$ $1 break"
+      "additional_directives": [
+        "rewrite ^/api(/.*)$ $1 break;"
+      ]
     },
     {
       "location": "/staging/api/",
       "address": "http://127.0.0.1:9001",
       "type": "http",
-      "rewrite": "^/staging/api(/.*)$ $1 break"
+      "additional_directives": [
+        "rewrite ^/staging/api(/.*)$ $1 break;"
+      ]
     },
     {
       "location": "/ws/",
@@ -36,7 +40,17 @@
       "location": "/staging/ws/",
       "address": "http://127.0.0.1:8081",
       "type": "websocket",
-      "rewrite": "^/staging/api(/.*)$ $1 break"
+      "additional_directives": [
+        "rewrite ^/staging/ws(/.*)$ $1 break;"
+      ]
+    },
+    {
+      "location": "/custom/",
+      "type": "custom",
+      "additional_directives": [
+        "rewrite ^/custom(/.*)$ $1 break;",
+        "add_header X-Custom-Test \"true\";"
+      ]
     }
   ]
 }

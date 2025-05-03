@@ -51,28 +51,30 @@ generate_location_blocks() {
 
     while IFS= read -r block; do
         location=$(echo "$block" | jq -r '.location')
-        address=$(echo "$block" | jq -r '.address')
+        address=$(echo "$block" | jq -r '.address // empty')
         type=$(echo "$block" | jq -r '.type // "http"')
-        rewrite=$(echo "$block" | jq -r '.rewrite // empty')
         root=$(echo "$block" | jq -r '.root // empty')
+        additional_directives=$(echo "$block" | jq -c '.additional_directives // []')
 
+        # Clean up address
         address="${address#http://}"
         address="${address#https://}"
 
+        # Fix trailing slash
         if [[ "$location" != "/" && "$location" != */ && "$location" != "~ "* ]]; then
             location="${location}/"
         fi
 
         output="${output}
     location $location {"
+
+        # Include root if defined
         [ -n "$root" ] && output="${output}
         root $root;"
 
-        [ -n "$rewrite" ] && output="${output}
-        rewrite $rewrite;"
-
-        case "$type" in
-        websocket)
+        if [[ "$type" == "custom" ]]; then
+            : # skip default directives
+        elif [[ "$type" == "websocket" ]]; then
             output="${output}
         proxy_http_version 1.1;
         proxy_pass http://$address;
@@ -83,8 +85,7 @@ generate_location_blocks() {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection upgrade;
         proxy_buffering off;"
-            ;;
-        php)
+        elif [[ "$type" == "php" ]]; then
             output="${output}
         try_files \$uri =404;
         fastcgi_split_path_info ^(.+\.php)(/.+)\$;
@@ -93,16 +94,20 @@ generate_location_blocks() {
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
         fastcgi_param PATH_INFO \$fastcgi_path_info;"
-            ;;
-        *)
+        else
             output="${output}
         proxy_pass http://$address;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;"
-            ;;
-        esac
+        fi
+
+        # Include custom directives
+        while IFS= read -r directive; do
+            [ -n "$directive" ] && output="${output}
+        $directive"
+        done <<<"$(echo "$additional_directives" | jq -r '.[]')"
 
         output="${output}
     }"
