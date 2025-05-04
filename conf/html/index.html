@@ -4,33 +4,187 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Message</title>
-    <script>
-      setTimeout(function () {
-        document.getElementById("message").innerHTML =
-          '<span style="color: black;">Just Kidding, Make sure to add a root "/" location to blocks in your env file';
-      }, 8000);
-    </script>
-  </head>
-  <body
-    style="
-      font-family: &quot;Courier New&quot;, Courier, monospace;
-      text-align: center;
-      margin-top: 20%;
-      background-color: #f4f4f4;
-      color: #333;
-      padding: 20px;
-    "
-  >
-    <h1
-      id="message"
-      style="
-        font-size: 50px;
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Courier New", Courier, monospace;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        background: linear-gradient(135deg, #1e1e1e, #2c3e50);
+        overflow: hidden;
+      }
+
+      .container {
+        text-align: center;
+        padding: 2rem;
+        max-width: 800px;
+        position: relative;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 300px;
+      }
+
+      h1 {
+        font-size: 3.5rem;
         font-weight: bold;
         color: #ff6347;
-        text-shadow: 3px 3px 5px rgba(0, 0, 0, 0.3);
-      "
-    >
-      Either you messed up or I did, but I am not going to fix it for you
-    </h1>
+        text-shadow:
+          0 0 10px rgba(255, 99, 71, 0.8),
+          0 0 20px rgba(255, 99, 71, 0.6);
+        margin-bottom: 1rem;
+        animation: pulse 2s infinite ease-in-out;
+        transition: all 0.8s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        opacity: 1;
+        transform: scale(1) rotate(0deg);
+      }
+
+      h1.slide-out {
+        opacity: 0;
+        transform: scale(0.8) rotate(-5deg) translateX(-50px);
+      }
+
+      h1.slide-in {
+        opacity: 1;
+        transform: scale(1) rotate(0deg) translateX(0);
+      }
+
+      .updated {
+        color: #ffffff;
+        text-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+      }
+
+      /* Particle background effect */
+      .particles {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: -1;
+      }
+
+      /* Glitch effect on hover */
+      h1:hover {
+        animation: glitch 0.3s linear infinite;
+      }
+
+      @keyframes pulse {
+        0% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.05);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+
+      @keyframes glitch {
+        0% {
+          transform: translate(0);
+        }
+        20% {
+          transform: translate(-5px, 5px);
+        }
+        40% {
+          transform: translate(5px, -5px);
+        }
+        60% {
+          transform: translate(-5px, 0);
+        }
+        80% {
+          transform: translate(5px, 0);
+        }
+        100% {
+          transform: translate(0);
+        }
+      }
+
+      /* Neon glow effect */
+      .neon {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        box-shadow:
+          0 0 20px rgba(255, 99, 71, 0.5),
+          0 0 40px rgba(255, 99, 71, 0.3);
+        z-index: -1;
+        border-radius: 15px;
+      }
+
+      /* Responsive design */
+      @media (max-width: 600px) {
+        h1 {
+          font-size: 2rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="particles" id="particles"></div>
+    <div class="container">
+      <div class="neon"></div>
+      <h1 id="message" class="slide-in">
+        Either you messed up or I did, but I am not going to fix it for you
+        <br />
+        🙃
+      </h1>
+    </div>
+    <script>
+      // Message update with smooth transition
+      setTimeout(() => {
+        const message = document.getElementById("message");
+        message.classList.remove("slide-in");
+        message.classList.add("slide-out");
+
+        setTimeout(() => {
+          message.innerHTML =
+            '<span class="updated">Just Kidding.... </br> Update "/" location block in conf/nginx.conf to point where you want or just return a 404 🤷‍♂️ </span>';
+          message.classList.remove("slide-out");
+          message.classList.add("slide-in");
+        }, 800); // Match transition duration
+      }, 8000);
+
+      // Particle effect
+      const particlesContainer = document.getElementById("particles");
+      function createParticle() {
+        const particle = document.createElement("div");
+        particle.style.position = "absolute";
+        particle.style.width = "5px";
+        wo: particle.style.height = "5px";
+        particle.style.background = `rgba(255, 99, 71, ${Math.random() * 0.5 + 0.2})`;
+        particle.style.borderRadius = "50%";
+        particle.style.left = `${Math.random() * 100}vw`;
+        particle.style.top = `${Math.random() * 100}vh`;
+        particle.style.animation = `move ${Math.random() * 10 + 5}s linear infinite`;
+        particlesContainer.appendChild(particle);
+
+        setTimeout(() => particle.remove(), 15000);
+      }
+
+      // Animation for particles
+      const styleSheet = document.createElement("style");
+      styleSheet.textContent = `
+        @keyframes move {
+          0% { transform: translateY(0); }
+          100% { transform: translateY(-100vh); }
+        }
+      `;
+      document.head.appendChild(styleSheet);
+
+      // Generate particles
+      setInterval(createParticle, 200);
+    </script>
   </body>
 </html>

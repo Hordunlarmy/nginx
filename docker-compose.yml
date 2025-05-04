@@ -9,7 +9,6 @@ services:
     volumes:
       - certbot-etc:/etc/letsencrypt
       - certbot-var:/var/www/certbot
-      - ./conf/nginx.conf.template:/etc/nginx/nginx.conf.template
       - ./conf/conf.d:/etc/nginx/conf.d
       - ./conf/nginx.conf:/etc/nginx/nginx.conf
       - ./conf/html:/etc/nginx/html

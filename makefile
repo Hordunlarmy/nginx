@@ -37,6 +37,10 @@ stop:
 		echo "[INFO] shared-network does not exist."; \
 	fi
 
+restart:
+	@echo "[INFO] Restarting NGINX container..."
+	docker restart nginx
+
 logs:
 	@ENV_NAME=$${env:-dev}; \
 	docker compose logs -f;

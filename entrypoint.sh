@@ -3,11 +3,11 @@
 set -e
 
 log_info() {
-	echo "[INFO] $1" >&2
+  echo "[INFO] $1" >&2
 }
 
 log_error() {
-	echo "[ERROR] $1" >&2
+  echo "[ERROR] $1" >&2
 }
 
 log_info "Starting entrypoint..."
@@ -15,8 +15,8 @@ log_info "Starting entrypoint..."
 CONFIG_JSON="/etc/nginx/config.json"
 
 if [ ! -f "$CONFIG_JSON" ]; then
-	log_error "Config file $CONFIG_JSON not found!"
-	exit 1
+  log_error "Config file $CONFIG_JSON not found!"
+  exit 1
 fi
 
 DOMAIN_NAMES=$(jq -r '.DOMAIN_NAMES' "$CONFIG_JSON")
@@ -26,56 +26,53 @@ EMAIL=$(jq -r '.EMAIL' "$CONFIG_JSON")
 ENABLE_HTTP_REDIRECT=$(jq -r '.ENABLE_HTTP_REDIRECT' "$CONFIG_JSON")
 BLOCKS=$(jq -c '.BLOCKS' "$CONFIG_JSON")
 
+IFS=',' read -ra DOMAINS <<< "$DOMAIN_NAMES"
+
 [ -z "$DOMAIN_NAMES" ] && log_error "DOMAIN_NAMES is not set!"
 [ -z "$SSL_PROVIDER" ] && log_error "SSL_PROVIDER is not set!"
 [ -z "$EMAIL" ] && log_error "EMAIL is not set!"
 [ -z "$SECURE" ] && log_error "SECURE is not set!"
 
-PRIMARY_DOMAIN=$(echo "$DOMAIN_NAMES" | cut -d',' -f1)
+generate_location_blocks_for_domain() {
+  local domain="$1"
+  local output=""
 
-generate_location_blocks() {
-    if [ -z "$BLOCKS" ]; then
-        log_info "BLOCKS is not set. No location blocks will be generated."
-        echo ""
-        return
-    fi
-
-    if ! echo "$BLOCKS" | jq -e '. | length > 0' >/dev/null 2>&1; then
-        log_error "BLOCKS is empty or not valid JSON. Raw BLOCKS: $BLOCKS"
-        echo ""
-        return
-    fi
-
-    log_info "Generating NGINX location blocks..."
-    local output=""
-
-    while IFS= read -r block; do
-        location=$(echo "$block" | jq -r '.location')
-        address=$(echo "$block" | jq -r '.address // empty')
-        type=$(echo "$block" | jq -r '.type // "http"')
-        root=$(echo "$block" | jq -r '.root // empty')
-        additional_directives=$(echo "$block" | jq -c '.additional_directives // []')
-
-        # Clean up address
-        address="${address#http://}"
-        address="${address#https://}"
-
-        # Fix trailing slash
-        if [[ "$location" != "/" && "$location" != */ && "$location" != "~ "* ]]; then
-            location="${location}/"
+  while IFS= read -r block; do
+    domains=$(echo "$block" | jq -r '.domains[]? // empty' | tr '\n' ' ')
+    if [ -n "$domains" ]; then
+      found=false
+      for d in $domains; do
+        if [ "$d" == "$domain" ]; then
+          found=true
+          break
         fi
+      done
+      [ "$found" != true ] && continue
+    fi
 
-        output="${output}
-    location $location {"
+    location=$(echo "$block" | jq -r '.location')
+    address=$(echo "$block" | jq -r '.address // empty')
+    type=$(echo "$block" | jq -r '.type // "http"')
+    root=$(echo "$block" | jq -r '.root // empty')
+    additional_directives=$(echo "$block" | jq -c '.additional_directives // []')
 
-        # Include root if defined
-        [ -n "$root" ] && output="${output}
+    address="${address#http://}"
+    address="${address#https://}"
+
+    if [[ "$location" != "/" && "$location" != */ && "$location" != "~ "* ]]; then
+      location="${location}/"
+    fi
+
+    output="${output}
+location $location {"
+
+    [ -n "$root" ] && output="${output}
         root $root;"
 
-        if [[ "$type" == "custom" ]]; then
-            : # skip default directives
-        elif [[ "$type" == "websocket" ]]; then
-            output="${output}
+    if [[ "$type" == "custom" ]]; then
+      :
+    elif [[ "$type" == "websocket" ]]; then
+      output="${output}
         proxy_http_version 1.1;
         proxy_pass http://$address;
         proxy_set_header Host \$host;
@@ -85,165 +82,120 @@ generate_location_blocks() {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection upgrade;
         proxy_buffering off;"
-        elif [[ "$type" == "php" ]]; then
-            output="${output}
+    elif [[ "$type" == "php" ]]; then
+      output="${output}
         try_files \$uri =404;
-        fastcgi_split_path_info ^(.+\.php)(/.+)\$;
+        fastcgi_split_path_info ^(.+\\.php)(/.+)\$;
         fastcgi_pass $address;
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
         fastcgi_param PATH_INFO \$fastcgi_path_info;"
-        else
-            output="${output}
+    else
+      output="${output}
         proxy_pass http://$address;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;"
-        fi
+    fi
 
-        # Include custom directives
-        while IFS= read -r directive; do
-            [ -n "$directive" ] && output="${output}
+    while IFS= read -r directive; do
+      [ -n "$directive" ] && output="${output}
         $directive"
-        done <<<"$(echo "$additional_directives" | jq -r '.[]')"
+    done <<<"$(echo "$additional_directives" | jq -r '.[]')"
 
-        output="${output}
-    }"
-    done <<<"$(echo "$BLOCKS" | jq -c '.[]')"
+    output="${output}
+}"
+  done <<<"$(echo "$BLOCKS" | jq -c '.[]')"
 
-    echo "$output" | sed 's/^/    /'
+  echo "$output"
 }
 
-log_info "Generating HTTP blocks..."
-HTTP_BLOCKS=$(generate_location_blocks)
-log_info "Generated HTTP blocks successfully."
+generate_nginx_config_for_domain() {
+  local domain="$1"
+  local config_file="/etc/nginx/conf.d/${domain}.conf"
 
-HTTPS_BLOCK=""
+  cat <<EOF > "$config_file"
+server {
+    listen 80;
+    server_name $domain;
 
-setup_ssl() {
-	log_info "SECURE is true. Setting up SSL..."
+EOF
 
-	if [ "$SSL_PROVIDER" = "certbot" ]; then
-		log_info "Using Certbot (standalone) to generate certificate..."
+  if [ "$ENABLE_HTTP_REDIRECT" = "true" ] && [ "$SECURE" = "true" ]; then
+    echo "    return 301 https://\$host\$request_uri;" >> "$config_file"
+  else
+    echo "$(generate_location_blocks_for_domain "$domain" | sed 's/^/    /')" >> "$config_file"
+  fi
 
-		CERT_PATH="/etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem"
+  echo "}" >> "$config_file"
 
-		if [ -f "$CERT_PATH" ]; then
-			cert_mtime=$(stat -c %Y "$CERT_PATH")
-			now=$(date +%s)
-			diff=$((now - cert_mtime))
+  if [ "$SECURE" = "true" ]; then
+    cat <<EOF >> "$config_file"
 
-			if [ "$diff" -lt 86400 ]; then
-				log_info "Certificate for ${PRIMARY_DOMAIN} was created less than 24 hours ago. Skipping regeneration."
-			else
-				log_info "Certificate is older than 24 hours, regenerating..."
-				# Proceed with certificate regeneration if needed
-				DOMAIN_ARGS=""
-				for DOMAIN in $(echo "$DOMAIN_NAMES" | tr ',' ' '); do
-					DOMAIN_ARGS="$DOMAIN_ARGS -d $DOMAIN"
-				done
-
-				if ! certbot certonly --standalone \
-					--preferred-challenges http \
-					--email "$EMAIL" \
-					--agree-tos \
-					--no-eff-email $DOMAIN_ARGS; then
-					log_error "Certbot certificate generation failed. Proceeding without SSL."
-					return 1
-				fi
-			fi
-		else
-			log_info "No existing certificate found. Generating a new one..."
-			DOMAIN_ARGS=""
-			for DOMAIN in $(echo "$DOMAIN_NAMES" | tr ',' ' '); do
-				DOMAIN_ARGS="$DOMAIN_ARGS -d $DOMAIN"
-			done
-
-			if ! certbot certonly --standalone \
-				--preferred-challenges http \
-				--email "$EMAIL" \
-				--agree-tos \
-				--no-eff-email $DOMAIN_ARGS; then
-				log_error "Certbot certificate generation failed. Proceeding without SSL."
-				return 1
-			fi
-		fi
-
-		# Ensure we set up the HTTPS block regardless of certificate creation
-		HTTPS_BLOCK="server {
+server {
     listen 443 ssl;
-    server_name ${DOMAIN_NAMES};
+    server_name $domain;
 
-    ssl_certificate /etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/$domain/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
 
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
-${ssl_location_blocks}
-  }"
+    ssl_prefer_server_ciphers on;
 
-		echo "0 0 * * * certbot renew --pre-hook 'nginx -s stop' --post-hook 'nginx -s reload'" >/etc/crontabs/root
+$(generate_location_blocks_for_domain "$domain" | sed 's/^/    /')
+}
+EOF
+  fi
 
-	elif [ "$SSL_PROVIDER" = "selfsigned" ]; then
-		log_info "Using self-signed certificate..."
-		mkdir -p /etc/letsencrypt/live/${PRIMARY_DOMAIN}
-
-		if ! openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-			-keyout /etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem \
-			-out /etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem \
-			-subj "/CN=${PRIMARY_DOMAIN}"; then
-			log_error "Self-signed certificate creation failed. Proceeding without SSL."
-			return 1
-		fi
-	else
-		log_error "Unknown SSL provider: $SSL_PROVIDER"
-		return 1
-	fi
-
-	local ssl_location_blocks=$(generate_location_blocks)
-
-	HTTPS_BLOCK="server {
-    listen 443 ssl;
-    server_name ${DOMAIN_NAMES};
-
-    ssl_certificate /etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem;
-
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-${ssl_location_blocks}
-  }"
+  log_info "Generated config for $domain at $config_file"
 }
 
+setup_ssl_certificates() {
+  for domain in "${DOMAINS[@]}"; do
+    domain_trimmed=$(echo "$domain" | xargs)
+    cert_dir="/etc/letsencrypt/live/$domain_trimmed"
+    cert_path="$cert_dir/fullchain.pem"
+
+    if [ -f "$cert_path" ]; then
+      cert_age=$(( $(date +%s) - $(stat -c %Y "$cert_path") ))
+      if [ "$cert_age" -lt 86400 ]; then
+        log_info "Certificate for $domain_trimmed is fresh. Skipping renewal."
+        continue
+      fi
+    fi
+
+    if [ "$SSL_PROVIDER" = "certbot" ]; then
+      log_info "Generating cert with Certbot for $domain_trimmed"
+      certbot certonly --standalone --preferred-challenges http \
+        --email "$EMAIL" --agree-tos --no-eff-email -d "$domain_trimmed" || \
+        log_error "Failed to generate cert for $domain_trimmed"
+    elif [ "$SSL_PROVIDER" = "selfsigned" ]; then
+      mkdir -p "$cert_dir"
+      openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout "$cert_dir/privkey.pem" \
+        -out "$cert_dir/fullchain.pem" \
+        -subj "/CN=$domain_trimmed"
+    else
+      log_error "Unknown SSL provider: $SSL_PROVIDER"
+    fi
+  done
+
+  echo "0 0 * * * certbot renew --pre-hook 'nginx -s stop' --post-hook 'nginx -s reload'" > /etc/crontabs/root
+}
+
+# Main
 if [ "$SECURE" = "true" ]; then
-	setup_ssl || log_info "SSL setup failed, continuing without SSL."
+  setup_ssl_certificates
 fi
 
-log_info "Rendering final nginx.conf..."
+for domain in "${DOMAINS[@]}"; do
+  domain_trimmed=$(echo "$domain" | xargs)
+  generate_nginx_config_for_domain "$domain_trimmed"
+done
 
-awk -v enable_http_redirect="$ENABLE_HTTP_REDIRECT" -v http_blocks="$HTTP_BLOCKS" -v https_block="$HTTPS_BLOCK" '
-{
-  if ($0 ~ "###BLOCKS###") {
-    print "\t###BLOCKS###"
-    if (enable_http_redirect == "true") {
-      print "\treturn 301 https://\$host\$request_uri;"
-    } else if (http_blocks != "") {
-      print http_blocks
-    }
-  } else if ($0 ~ "###HTTPS SERVER###") {
-    if (https_block != "") {
-      print https_block
-    } else {
-      print "\t###HTTPS SERVER###"
-    }
-  } else {
-    print $0
-  }
-}
-' /etc/nginx/nginx.conf.template >/etc/nginx/nginx.conf
-
-log_info "NGINX configuration generated successfully."
 log_info "Starting NGINX..."
 exec nginx -g "daemon off;"
+

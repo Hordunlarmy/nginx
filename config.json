@@ -1,9 +1,9 @@
 {
-  "DOMAIN_NAMES": "horduntech.com, www.horduntech.com",
-  "SECURE": false,
-  "SSL_PROVIDER": "certbot",
+  "DOMAIN_NAMES": "example.com, www.example.com",
+  "SECURE": true,
+  "SSL_PROVIDER": "selfsigned",
   "EMAIL": "horduntech@gmail.com",
-  "ENABLE_HTTP_REDIRECT": false,
+  "ENABLE_HTTP_REDIRECT": true,
   "BLOCKS": [
     {
       "location": "/",
@@ -13,9 +13,7 @@
       "location": "/api/",
       "address": "http://127.0.0.1:9000",
       "type": "http",
-      "additional_directives": [
-        "rewrite ^/api(/.*)$ $1 break;"
-      ]
+      "domains": ["example.com", "www.example.com"]
     },
     {
       "location": "/staging/api/",
@@ -23,26 +21,21 @@
       "type": "http",
       "additional_directives": [
         "rewrite ^/staging/api(/.*)$ $1 break;"
-      ]
+      ],
+      "domains": ["www.example.com"]
     },
     {
       "location": "/ws/",
       "address": "http://127.0.0.1:8080",
-      "type": "websocket"
+      "type": "websocket",
+      "domains": ["example.com"]
     },
     {
-      "location": "~ \\\\.php$",
+      "location": "~ \\.php$",
       "address": "http://127.0.0.1:8080",
       "type": "php",
-      "root": "/var/www/html"
-    },
-    {
-      "location": "/staging/ws/",
-      "address": "http://127.0.0.1:8081",
-      "type": "websocket",
-      "additional_directives": [
-        "rewrite ^/staging/ws(/.*)$ $1 break;"
-      ]
+      "root": "/var/www/html",
+      "domains": ["www.example.com"]
     },
     {
       "location": "/custom/",
@@ -54,4 +47,5 @@
     }
   ]
 }
+
 
