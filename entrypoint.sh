@@ -170,7 +170,8 @@ setup_ssl_certificates() {
     if [ "$SSL_PROVIDER" = "certbot" ]; then
       log_info "Generating cert with Certbot for $domain_trimmed"
       certbot certonly --standalone --preferred-challenges http \
-        --email "$EMAIL" --agree-tos --no-eff-email -d "$domain_trimmed" || \
+        --email "$EMAIL" --agree-tos --no-eff-email -d "$domain_trimmed" \
+        --non-interactive --keep-until-expiring || \
         log_error "Failed to generate cert for $domain_trimmed"
     elif [ "$SSL_PROVIDER" = "selfsigned" ]; then
       mkdir -p "$cert_dir"
